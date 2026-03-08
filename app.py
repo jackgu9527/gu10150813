@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 import glob
 import psycopg2
+from psycopg2 import pool
 from psycopg2 import IntegrityError
 import warnings
 
@@ -11,7 +12,7 @@ import warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # ==========================================
-# 1. 系統初始化與資料庫設定 (Supabase 雲端版)
+# 1. 系統初始化與資料庫設定 (渦輪加速連線池)
 # ==========================================
 st.set_page_config(page_title="大隊部準則管理系統", layout="wide")
 
@@ -23,10 +24,30 @@ if not csv_candidates:
     csv_candidates = glob.glob(os.path.join(BASE_DIR, '*.csv'))
 CSV_FILE = csv_candidates[0] if csv_candidates else None
 
-# ⚡ 雲端連線引擎 (加裝 5 秒防掛死保險絲)
+# ⚡ 雲端連線引擎 (渦輪加速版 Plan B+)
+@st.cache_resource(ttl=3600)  # 快取連線池，每小時重置以確保通道乾淨
+def get_pool():
+    return pool.ThreadedConnectionPool(1, 20, st.secrets["DATABASE_URL"], connect_timeout=5)
+
 def get_db_connection():
-    # 讀取 Streamlit Cloud 後台設定的金鑰
-    return psycopg2.connect(st.secrets["DATABASE_URL"], connect_timeout=5)
+    db_pool = get_pool()
+    conn = db_pool.getconn()
+    # 🛡️ 防呆機制：偵測連線是否存活
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT 1")
+    except Exception:
+        # 如果閒置斷線，丟棄舊連線，瞬間重新申請
+        db_pool.putconn(conn, close=True)
+        conn = db_pool.getconn()
+    return conn
+
+def release_connection(conn):
+    # 用完不關門，而是把連線放回池子裡保留
+    try:
+        get_pool().putconn(conn)
+    except Exception:
+        pass
 
 def log_action(user_id, action, details):
     conn = get_db_connection()
@@ -36,14 +57,13 @@ def log_action(user_id, action, details):
                   (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(user_id), str(action), str(details)))
         conn.commit()
     finally:
-        conn.close()
+        release_connection(conn)
 
 def init_db():
     conn = get_db_connection()
     try:
         c = conn.cursor()
         
-        # PostgreSQL 使用 SERIAL 代替 AUTOINCREMENT
         c.execute('''CREATE TABLE IF NOT EXISTS users (
                         id SERIAL PRIMARY KEY,
                         login_id TEXT UNIQUE, password TEXT, role TEXT, unit TEXT,
@@ -137,13 +157,13 @@ def init_db():
                 
         conn.commit()
     finally:
-        conn.close()
+        release_connection(conn)
 
-# ⚡ 初次連線檢查 (避免 Streamlit 啟動時報錯)
+# ⚡ 初次連線檢查
 try:
     init_db()
 except Exception as e:
-    st.error(f"資料庫連線失敗，請檢查 Secrets 設定！詳細錯誤：{e}")
+    st.error(f"資料庫連線失敗！請檢查 Secrets 或網路狀態。詳細錯誤：{e}")
     st.stop()
 
 # ==========================================
@@ -199,7 +219,7 @@ def run_ghost_cleanup():
     except Exception:
         pass
     finally:
-        conn.close()
+        release_connection(conn)
         st.session_state['ghost_engine_ran'] = True 
 
 # ==========================================
@@ -230,7 +250,7 @@ if 'logged_in' not in st.session_state:
                 else:
                     st.error("❌ 帳號或密碼錯誤 / 帳號不存在")
             finally:
-                conn.close()
+                release_connection(conn)
 
     with tab2:
         st.info("新進班隊請在此註冊，送出後將由幹部審核開通。")
@@ -255,7 +275,7 @@ if 'logged_in' not in st.session_state:
                         log_action(reg_id, "註冊申請", f"{reg_squadron} {reg_unit} 提出註冊申請")
                         st.success("✅ 註冊申請已送出！請等待幹部核准後即可登入。")
                 finally:
-                    conn.close()
+                    release_connection(conn)
             else:
                 st.warning("請填寫所有欄位")
     st.stop()
@@ -314,9 +334,7 @@ try:
                     else:
                         st.info(f"📅 距離結訓日還有：{days_left} 天")
                 
-                # =====================================
                 # L5：待領取準則填寫
-                # =====================================
                 pending_claim = pd.read_sql_query(f"SELECT id, book_name FROM books WHERE owner_id='{st.session_state.login_id}' AND status='保留待領取'", conn)
                 if not pending_claim.empty:
                     st.warning("⚠️ 您有已核准但尚未綁定序號的準則！請對照實體書進行批次登錄。")
@@ -384,9 +402,7 @@ try:
                                 time.sleep(1.5)
                                 st.rerun()
                 
-                # =====================================
                 # L5：我的持有清單
-                # =====================================
                 st.markdown("#### 📦 我的持有清單")
                 agg_df = pd.read_sql_query(f"SELECT book_name as 書名, COUNT(*) as 總數量 FROM books WHERE owner_id='{st.session_state.login_id}' AND status='借閱中' GROUP BY book_name", conn)
                 if agg_df.empty:
@@ -1181,5 +1197,4 @@ try:
         st.dataframe(logs_df, use_container_width=True, hide_index=True)
 
 finally:
-
-    conn.close()
+    release_connection(conn)
