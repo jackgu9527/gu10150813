@@ -23,10 +23,10 @@ if not csv_candidates:
     csv_candidates = glob.glob(os.path.join(BASE_DIR, '*.csv'))
 CSV_FILE = csv_candidates[0] if csv_candidates else None
 
-# ⚡ 雲端連線引擎
+# ⚡ 雲端連線引擎 (加裝 5 秒防掛死保險絲)
 def get_db_connection():
     # 讀取 Streamlit Cloud 後台設定的金鑰
-    return psycopg2.connect(st.secrets["DATABASE_URL"])
+    return psycopg2.connect(st.secrets["DATABASE_URL"], connect_timeout=5)
 
 def log_action(user_id, action, details):
     conn = get_db_connection()
@@ -1181,4 +1181,5 @@ try:
         st.dataframe(logs_df, use_container_width=True, hide_index=True)
 
 finally:
+
     conn.close()
