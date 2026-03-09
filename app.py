@@ -1173,7 +1173,7 @@ try:
                         return_df = pd.read_sql_query(f"SELECT b.book_name, COUNT(b.id) as qty FROM books b JOIN users u ON b.owner_id = u.login_id WHERE u.unit='{target_unit}' AND b.status='歸還中' GROUP BY b.book_name", conn)
                         
                         # 3. 組合文字
-                        msg = f"{contact_person}好，{st.session_state.squadron}今天方便借書嗎\n"
+                        msg = f"{contact_person}好，{st.session_state.squadron}借還書清單\n"
                         msg += f"班隊名稱：{target_unit}\n"
                         msg += f"借閱時間：{borrow_time}\n"
                         
@@ -1279,4 +1279,5 @@ try:
 
 finally:
     release_connection(conn)
+
 
