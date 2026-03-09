@@ -709,16 +709,43 @@ try:
         
         if st.session_state.role == 'L1':
             st.error("👑 系統管理員模式：可強制修改全域使用者資料")
-            all_users = pd.read_sql_query("SELECT id, login_id, password, role, squadron, unit, status, setup_count FROM users", conn)
-            edited_u = st.data_editor(all_users, use_container_width=True)
-            if st.button("💾 強制儲存變更"):
+            # 升級 1：在 SQL 查詢中正式加入 title(職務) 與 name(姓名)
+            all_users = pd.read_sql_query("SELECT id, login_id, password, role, squadron, unit, title, name, status, setup_count FROM users ORDER BY id", conn)
+            
+            st.info("💡 提示：ID 與 系統階級(role) 鎖定防呆，其餘皆可直接點擊表格修改。")
+            edited_u = st.data_editor(all_users, use_container_width=True, disabled=["id", "role"], key="l1_admin_editor")
+            
+            if st.button("💾 強制儲存變更", type="primary"):
                 c = conn.cursor()
-                for index, row in edited_u.iterrows():
-                    c.execute(f"UPDATE users SET login_id='{row['login_id']}', password='{row['password']}', status='{row['status']}', setup_count={int(row['setup_count'])} WHERE id={int(row['id'])}")
-                conn.commit()
-                log_action("SYSTEM_L1", "上帝模式修改", "L1 強制覆蓋了全域使用者資料")
-                st.success("資料庫已強制更新！")
-                st.rerun()
+                try:
+                    for index, row in edited_u.iterrows():
+                        # 升級 2：安全過濾空白欄位，避免表格裡的空白變成 "None" 字串寫入資料庫
+                        safe_title = str(row['title']) if pd.notna(row['title']) else ""
+                        safe_name = str(row['name']) if pd.notna(row['name']) else ""
+                        safe_squadron = str(row['squadron']) if pd.notna(row['squadron']) else ""
+                        safe_unit = str(row['unit']) if pd.notna(row['unit']) else ""
+                        
+                        # 升級 3：將職務(title)與姓名(name)正式接入寫入引擎
+                        c.execute("""
+                            UPDATE users 
+                            SET login_id=%s, password=%s, squadron=%s, unit=%s, title=%s, name=%s, status=%s, setup_count=%s 
+                            WHERE id=%s
+                        """, (
+                            str(row['login_id']), str(row['password']), 
+                            safe_squadron, safe_unit, 
+                            safe_title, safe_name,
+                            str(row['status']), int(row['setup_count']), 
+                            int(row['id'])
+                        ))
+                    conn.commit()
+                    log_action("SYSTEM_L1", "上帝模式修改", "L1 強制覆蓋了全域使用者資料(含姓名與職務)")
+                    st.success("✅ 資料庫已強制更新！")
+                    import time
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    conn.rollback()
+                    st.error(f"❌ 儲存失敗！可能有帳號重複或格式錯誤。詳細原因：{e}")
 
         elif st.session_state.role == 'L3':
             st.subheader("中隊後台")
@@ -784,7 +811,7 @@ try:
 
         elif st.session_state.role == 'L4':
             is_doc = "人事" in st.session_state.title or "文書" in st.session_state.title
-            tabs = st.tabs(["註冊開通", "準則借閱核准", "準則歸還", "結訓日與帳密修改"]) if is_doc else st.tabs(["註冊開通", "準則歸還", "結訓日與帳密修改"])
+            tabs = st.tabs(["註冊開通", "準則借閱核准", "準則歸還", "結訓日與帳密修改", "💬 Line報表產生"]) if is_doc else st.tabs(["註冊開通", "準則歸還", "結訓日與帳密修改", "💬 Line報表產生"])
             sq_list = [s.strip() for s in st.session_state.squadron.split(',')]
             sq_in_clause = "'" + "','".join(sq_list) + "'"
                 
@@ -1115,6 +1142,60 @@ try:
 
 💡 **您無需再進行任何手動掃描操作！**""")
 
+            # ==========================================
+            # 💬 Line 借還書對話自動生成器 (貼在這裡 👇)
+            # ==========================================
+            with tabs[-1]:
+                st.subheader("💬 Line 借還書對話自動生成器")
+                st.info("💡 系統會自動抓取該班隊目前「待審核借閱」與「歸還中」的準則，並排版成可以直接傳 Line 的格式。")
+                
+                # 抓取該中隊底下的所有班隊選單
+                unit_options = pd.read_sql_query(f"SELECT DISTINCT unit FROM users WHERE squadron IN ({sq_in_clause}) AND role='L5'", conn)
+                
+                if not unit_options.empty:
+                    target_unit = st.selectbox("請選擇要回報的班隊", unit_options['unit'].tolist())
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        contact_person = st.text_input("開頭稱呼", value="劉姐")
+                    with col2:
+                        # 自動產生包含星期幾的預設時間
+                        tw_wd = ["一", "二", "三", "四", "五", "六", "日"][datetime.now().weekday()]
+                        default_time = f"{datetime.now().month}/{datetime.now().day}（{tw_wd}）1630"
+                        borrow_time = st.text_input("預計借閱時間", value=default_time)
+                        
+                    if st.button("🚀 生成對話訊息", type="primary"):
+                        c = conn.cursor()
+                        # 1. 抓取借閱清單 (待審核 或 保留待領取 的數量)
+                        borrow_df = pd.read_sql_query(f"SELECT book_name, SUM(quantity) as qty FROM borrow_requests WHERE unit='{target_unit}' AND status IN ('待審核', '已核准(實發%%)') GROUP BY book_name", conn)
+                        
+                        # 2. 抓取歸還清單 (狀態為歸還中的數量)
+                        return_df = pd.read_sql_query(f"SELECT b.book_name, COUNT(b.id) as qty FROM books b JOIN users u ON b.owner_id = u.login_id WHERE u.unit='{target_unit}' AND b.status='歸還中' GROUP BY b.book_name", conn)
+                        
+                        # 3. 組合文字
+                        msg = f"{contact_person}好，{st.session_state.squadron}今天方便借書嗎\n"
+                        msg += f"班隊名稱：{target_unit}\n"
+                        msg += f"借閱時間：{borrow_time}\n"
+                        
+                        msg += "借閱書目：\n"
+                        if not borrow_df.empty:
+                            for _, row in borrow_df.iterrows():
+                                msg += f"{row['book_name']}*{int(row['qty'])}\n"
+                        else:
+                            msg += "無\n"
+                            
+                        msg += "\n歸還書目：\n"
+                        if not return_df.empty:
+                            for _, row in return_df.iterrows():
+                                msg += f"{row['book_name']}*{int(row['qty'])}\n"
+                        else:
+                            msg += "無\n"
+                            
+                        st.success("✨ 訊息生成完畢！請點擊框框內全選複製：")
+                        st.text_area("複製區", value=msg, height=350)
+                else:
+                    st.warning("目前沒有可以生成報表的班隊資料。")
+
     elif menu == "綜合查詢" and st.session_state.role in ['L1', 'L2', 'L3', 'L4']:
         st.header("🔍綜合查詢")
         search_type = st.radio("查詢模式", ["查書名", "查序號", "中隊持有現況"], horizontal=True)
@@ -1198,3 +1279,4 @@ try:
 
 finally:
     release_connection(conn)
+
