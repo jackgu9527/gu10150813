@@ -1151,7 +1151,7 @@ try:
                 sq_list = [s.strip() for s in st.session_state.squadron.split(',')]
                 target_squadron = st.selectbox("請選擇要匯出的中隊", sq_list)
                 
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(2)
                 with col1:
                     contact_person = st.text_input("開頭稱呼", value="劉姐")
                 with col2:
@@ -1185,7 +1185,7 @@ try:
                     
                     # 3. 組合文字
                     msg = f"{contact_person}好，{target_squadron}借書清單\n"
-                    msg += f"借閱時間：{borrow_time}\n\n"
+                    msg += f"借閱時間：{borrow_time_str}\n\n"
                     
                     # 找出所有今天有借還動作的班隊
                     all_units = set()
@@ -1309,6 +1309,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
