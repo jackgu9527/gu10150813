@@ -1141,7 +1141,7 @@ try:
 💡 **您無需再進行任何手動掃描操作！**""")
 
             # ==========================================
-            # 💬 Line 借還書對話自動生成器 (中隊彙總版)
+            # 💬 Line 借還書對話自動生成器 (中隊彙總版 + 三格選單)
             # ==========================================
             with tabs[-1]:
                 st.subheader("💬 Line 借還書對話自動生成器")
@@ -1151,15 +1151,20 @@ try:
                 sq_list = [s.strip() for s in st.session_state.squadron.split(',')]
                 target_squadron = st.selectbox("請選擇要匯出的中隊", sq_list)
                 
-                col1, col2, col3 = st.columns(2)
+                # 🚀 升級為三格選單：稱呼、日期月曆、時間滾輪 (切成 3 欄)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     contact_person = st.text_input("開頭稱呼", value="劉姐")
                 with col2:
-                    # 加入台灣時區，確保自動產生的星期與日期絕對精準
                     tz_tw = timezone(timedelta(hours=8))
-                    tw_wd = ["一", "二", "三", "四", "五", "六", "日"][datetime.now(tz_tw).weekday()]
-                    default_time = f"{datetime.now(tz_tw).month}/{datetime.now(tz_tw).day}（{tw_wd}）1630"
-                    borrow_time = st.text_input("預計借閱時間", value=default_time)
+                    sel_date = st.date_input("預計日期", value=datetime.now(tz_tw).date())
+                with col3:
+                    # 預設下午 16:30，方便部隊作息
+                    sel_time = st.time_input("預計時間", value=datetime.strptime("16:30", "%H:%M").time())
+                    
+                # 系統自動將選單結果，無縫接軌融合成軍規文字格式 (例：3/10（二）1630)
+                tw_wd = ["一", "二", "三", "四", "五", "六", "日"][sel_date.weekday()]
+                borrow_time_str = f"{sel_date.month}/{sel_date.day}（{tw_wd}）{sel_time.strftime('%H%M')}"
                     
                 if st.button("🚀 生成中隊彙總報表", type="primary"):
                     c = conn.cursor()
@@ -1309,6 +1314,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
