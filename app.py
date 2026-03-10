@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import os
 import glob
 import psycopg2
@@ -174,6 +174,11 @@ def run_ghost_cleanup():
         return
     
     conn = get_db_connection()
+    try:
+        c = conn.cursor()
+        # 🚀 強制對齊台灣時間 (UTC+8)，精準執行 24:00 斬首行動
+        tz_tw = timezone(timedelta(hours=8))
+        today_str = datetime.now(tz_tw).strftime('%Y-%m-%d')
     try:
         c = conn.cursor()
         today_str = datetime.now().strftime('%Y-%m-%d')
@@ -1143,58 +1148,90 @@ try:
 💡 **您無需再進行任何手動掃描操作！**""")
 
             # ==========================================
-            # 💬 Line 借還書對話自動生成器 (貼在這裡 👇)
+            # 💬 Line 借還書對話自動生成器 (中隊彙總版)
             # ==========================================
             with tabs[-1]:
                 st.subheader("💬 Line 借還書對話自動生成器")
-                st.info("💡 系統會自動抓取該班隊目前「待審核借閱」與「歸還中」的準則，並排版成可以直接傳 Line 的格式。")
+                st.info("💡 選擇您管轄的「中隊」，系統會自動統整該中隊底下所有班隊的借還書目。")
                 
-                # 抓取該中隊底下的所有班隊選單
-                unit_options = pd.read_sql_query(f"SELECT DISTINCT unit FROM users WHERE squadron IN ({sq_in_clause}) AND role='L5'", conn)
+                # 升級：改為下拉選擇「中隊」，自動支援跨中隊管轄的文書兵
+                sq_list = [s.strip() for s in st.session_state.squadron.split(',')]
+                target_squadron = st.selectbox("請選擇要匯出的中隊", sq_list)
                 
-                if not unit_options.empty:
-                    target_unit = st.selectbox("請選擇要回報的班隊", unit_options['unit'].tolist())
+                col1, col2 = st.columns(2)
+                with col1:
+                    contact_person = st.text_input("開頭稱呼", value="劉姐")
+                with col2:
+                    # 加入台灣時區，確保自動產生的星期與日期絕對精準
+                    tz_tw = timezone(timedelta(hours=8))
+                    tw_wd = ["一", "二", "三", "四", "五", "六", "日"][datetime.now(tz_tw).weekday()]
+                    default_time = f"{datetime.now(tz_tw).month}/{datetime.now(tz_tw).day}（{tw_wd}）1630"
+                    borrow_time = st.text_input("預計借閱時間", value=default_time)
                     
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        contact_person = st.text_input("開頭稱呼", value="劉姐")
-                    with col2:
-                        # 自動產生包含星期幾的預設時間
-                        tw_wd = ["一", "二", "三", "四", "五", "六", "日"][datetime.now().weekday()]
-                        default_time = f"{datetime.now().month}/{datetime.now().day}（{tw_wd}）1630"
-                        borrow_time = st.text_input("預計借閱時間", value=default_time)
-                        
-                    if st.button("🚀 生成對話訊息", type="primary"):
-                        c = conn.cursor()
-                        # 1. 抓取借閱清單 (待審核 或 保留待領取 的數量)
-                        borrow_df = pd.read_sql_query(f"SELECT book_name, SUM(quantity) as qty FROM borrow_requests WHERE unit='{target_unit}' AND status IN ('待審核', '已核准(實發%%)') GROUP BY book_name", conn)
-                        
-                        # 2. 抓取歸還清單 (狀態為歸還中的數量)
-                        return_df = pd.read_sql_query(f"SELECT b.book_name, COUNT(b.id) as qty FROM books b JOIN users u ON b.owner_id = u.login_id WHERE u.unit='{target_unit}' AND b.status='歸還中' GROUP BY b.book_name", conn)
-                        
-                        # 3. 組合文字
-                        msg = f"{contact_person}好，{st.session_state.squadron}借還書清單\n"
-                        msg += f"班隊名稱：{target_unit}\n"
-                        msg += f"借閱時間：{borrow_time}\n"
-                        
-                        msg += "借閱書目：\n"
-                        if not borrow_df.empty:
-                            for _, row in borrow_df.iterrows():
-                                msg += f"{row['book_name']}*{int(row['qty'])}\n"
-                        else:
-                            msg += "無\n"
+                if st.button("🚀 生成中隊彙總報表", type="primary"):
+                    c = conn.cursor()
+                    # 1. 抓取該中隊下「所有班隊」的借閱清單
+                    borrow_query = f"""
+                        SELECT br.unit, br.book_name, SUM(br.quantity) as qty 
+                        FROM borrow_requests br 
+                        JOIN users u ON br.login_id = u.login_id 
+                        WHERE u.squadron='{target_squadron}' AND br.status IN ('待審核', '已核准(實發%%)') 
+                        GROUP BY br.unit, br.book_name
+                    """
+                    borrow_df = pd.read_sql_query(borrow_query, conn)
+                    
+                    # 2. 抓取該中隊下「所有班隊」的歸還清單
+                    return_query = f"""
+                        SELECT u.unit, b.book_name, COUNT(b.id) as qty 
+                        FROM books b 
+                        JOIN users u ON b.owner_id = u.login_id 
+                        WHERE u.squadron='{target_squadron}' AND b.status='歸還中' 
+                        GROUP BY u.unit, b.book_name
+                    """
+                    return_df = pd.read_sql_query(return_query, conn)
+                    
+                    # 3. 組合文字
+                    msg = f"{contact_person}好，{target_squadron}今天方便借書嗎\n"
+                    msg += f"借閱時間：{borrow_time}\n\n"
+                    
+                    # 找出所有今天有借還動作的班隊
+                    all_units = set()
+                    if not borrow_df.empty: all_units.update(borrow_df['unit'].tolist())
+                    if not return_df.empty: all_units.update(return_df['unit'].tolist())
+                    
+                    if not all_units:
+                        msg += "今日無任何班隊送出借還書申請。\n"
+                    else:
+                        for unit in sorted(list(all_units)):
+                            msg += f"==== 【{unit}】 ====\n"
                             
-                        msg += "\n歸還書目：\n"
-                        if not return_df.empty:
-                            for _, row in return_df.iterrows():
-                                msg += f"{row['book_name']}*{int(row['qty'])}\n"
-                        else:
-                            msg += "無\n"
+                            # 借閱區塊
+                            msg += "借閱書目：\n"
+                            if not borrow_df.empty:
+                                unit_borrow = borrow_df[borrow_df['unit'] == unit]
+                                if not unit_borrow.empty:
+                                    for _, row in unit_borrow.iterrows():
+                                        msg += f"{row['book_name']}*{int(row['qty'])}\n"
+                                else:
+                                    msg += "無\n"
+                            else:
+                                msg += "無\n"
+                                
+                            # 歸還區塊
+                            msg += "\n歸還書目：\n"
+                            if not return_df.empty:
+                                unit_return = return_df[return_df['unit'] == unit]
+                                if not unit_return.empty:
+                                    for _, row in unit_return.iterrows():
+                                        msg += f"{row['book_name']}*{int(row['qty'])}\n"
+                                else:
+                                    msg += "無\n"
+                            else:
+                                msg += "無\n"
+                            msg += "\n"
                             
-                        st.success("✨ 訊息生成完畢！請點擊框框內全選複製：")
-                        st.text_area("複製區", value=msg, height=350)
-                else:
-                    st.warning("目前沒有可以生成報表的班隊資料。")
+                    st.success("✨ 中隊彙總報表生成完畢！請點擊框框內全選複製：")
+                    st.text_area("複製區", value=msg.strip(), height=400)
 
     elif menu == "綜合查詢" and st.session_state.role in ['L1', 'L2', 'L3', 'L4']:
         st.header("🔍綜合查詢")
@@ -1279,5 +1316,6 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
