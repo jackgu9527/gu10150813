@@ -1184,7 +1184,7 @@ try:
                     return_df = pd.read_sql_query(return_query, conn)
                     
                     # 3. 組合文字
-                    msg = f"{contact_person}好，{target_squadron}今天方便借書嗎\n"
+                    msg = f"{contact_person}好，{target_squadron}借書清單\n"
                     msg += f"借閱時間：{borrow_time}\n\n"
                     
                     # 找出所有今天有借還動作的班隊
@@ -1309,6 +1309,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
