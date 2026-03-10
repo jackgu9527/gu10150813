@@ -167,7 +167,7 @@ except Exception as e:
     st.stop()
 
 # ==========================================
-# ⚡ 幽靈背景引擎：結訓日 24:00 全自動清查
+# ⚡ 幽靈背景引擎：結訓日 24:00 全自動清查 (台灣時區校正版)
 # ==========================================
 def run_ghost_cleanup():
     if 'ghost_engine_ran' in st.session_state:
@@ -179,17 +179,12 @@ def run_ghost_cleanup():
         # 🚀 強制對齊台灣時間 (UTC+8)，精準執行 24:00 斬首行動
         tz_tw = timezone(timedelta(hours=8))
         today_str = datetime.now(tz_tw).strftime('%Y-%m-%d')
-    try:
-        c = conn.cursor()
-        today_str = datetime.now().strftime('%Y-%m-%d')
         
         c.execute(f"SELECT id, login_id, unit FROM users WHERE role='L5' AND discharge_date < '{today_str}' AND status='啟用'")
         overdue_users = c.fetchall()
         
         if overdue_users:
-            del_count = 0
-            lock_count = 0
-            now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_time = datetime.now(tz_tw).strftime("%Y-%m-%d %H:%M:%S")
             
             for u_row in overdue_users:
                 u_id = int(u_row[0])
@@ -202,7 +197,6 @@ def run_ghost_cleanup():
                 if unreturned == 0:
                     c.execute(f"DELETE FROM users WHERE id={u_id}")
                     c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, "SYSTEM", "帳號註銷", f"班隊 {u_unit} ({u_login}) 已結訓且無欠裝，自動註銷。"))
-                    del_count += 1
                 else:
                     c.execute("SELECT login_id FROM users WHERE login_id LIKE 'cbrn%'")
                     existing_cbrn = [row[0] for row in c.fetchall()]
@@ -216,9 +210,8 @@ def run_ghost_cleanup():
                     c.execute(f"UPDATE borrow_requests SET login_id='{new_login}' WHERE login_id='{u_login}'")
                     c.execute(f"UPDATE action_logs SET user_id='{new_login}' WHERE user_id='{u_login}'")
                     c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, "SYSTEM", "強制扣留", f"班隊 {u_unit} ({u_login}) 結訓欠裝 {unreturned} 本，強制鎖定為 {new_login}。"))
-                    lock_count += 1
                     
-        seven_days_ago = (datetime.now() - pd.Timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+        seven_days_ago = (datetime.now(tz_tw) - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
         c.execute(f"DELETE FROM action_logs WHERE timestamp < '{seven_days_ago}' AND user_id NOT IN (SELECT login_id FROM users) AND user_id != 'SYSTEM'")
         conn.commit()
     except Exception:
@@ -1316,6 +1309,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
