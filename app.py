@@ -1092,10 +1092,10 @@ try:
             rescue_tab = tabs[3] if is_doc else tabs[2]
             with rescue_tab:
                 st.subheader("👤 訓員結訓日修改與帳密救援")
-                l5_users = pd.read_sql_query(f"SELECT id, squadron as 中隊, unit as 班隊, login_id as 帳號, discharge_date as 結訓日, setup_count as 免審額度 FROM users WHERE role='L5' AND status='啟用' AND squadron IN ({sq_in_clause})", conn)
+                l5_users = pd.read_sql_query(f" squadron as 中隊, unit as 班隊, login_id as 訓員帳號, discharge_date as 結訓日, FROM users WHERE role='L5' AND status='啟用' AND squadron IN ({sq_in_clause})", conn)
                 if not l5_users.empty:
                     l5_users['結訓日'] = pd.to_datetime(l5_users['結訓日'], errors='coerce').dt.date
-                    edited_date = st.data_editor(l5_users, hide_index=True, disabled=["id", "中隊", "班隊", "帳號", "免審額度"], column_config={"結訓日": st.column_config.DateColumn("結訓日期", format="YYYY-MM-DD")})
+                    edited_date = st.data_editor(l5_users, hide_index=True, disabled=["中隊", "班隊", "訓員帳號"], column_config={"結訓日": st.column_config.DateColumn("結訓日期", format="YYYY-MM-DD")})
                     if st.button("💾 儲存結訓日變更"):
                         c = conn.cursor()
                         has_err = False
@@ -1116,7 +1116,7 @@ try:
                         else:
                             st.error("❌ 更新結訓日發生異常！")
                         
-                    reset_df = l5_users[['id', '中隊', '班隊', '帳號', '免審額度']].copy()
+                    reset_df = l5_users[['中隊', '班隊', '訓員帳號']].copy()
                     reset_df.insert(0, "選取", False)
                     edited_u = st.data_editor(reset_df, hide_index=True)
                     sel_reset = edited_u[edited_u["選取"] == True]["id"].tolist()
@@ -1314,6 +1314,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
