@@ -620,51 +620,97 @@ try:
             st.markdown(f"**{display_name}**，長官好今日概況良好。")
 
     elif menu == "準則借閱" and st.session_state.role == 'L5':
-        st.header("📥 準則借閱申請")
-        if 'borrow_success' in st.session_state:
-            st.success(st.session_state.borrow_success)
-            del st.session_state.borrow_success
+        st.header("📥 準則借閱與回報")
+        
+        # 🚀 升級：將原本的單一畫面，切分成「借閱申請」與「Line 回報」兩個獨立分頁
+        tabs_l5_borrow = st.tabs(["📚 借閱申請", "💬 Line 借還回報"])
+        
+        # ======== 🟢 分頁 1：原本的借閱申請邏輯 ========
+        with tabs_l5_borrow[0]:
+            if 'borrow_success' in st.session_state:
+                st.success(st.session_state.borrow_success)
 
-        stock_df = pd.read_sql_query("SELECT book_name as 書名, COUNT(*) as 可用庫存 FROM books WHERE status='在庫' GROUP BY book_name", conn)
-        if not stock_df.empty:
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.dataframe(stock_df, hide_index=True)
-            with col2:
-                book_choice = st.selectbox("選擇需要借閱的準則", stock_df['書名'].tolist())
-                max_stock = int(stock_df[stock_df['書名'] == book_choice]['可用庫存'].iloc[0])
-                qty = st.number_input("申請數量 (已鎖定最高可用庫存)", min_value=1, max_value=max_stock, value=1)
-                
-                c = conn.cursor()
-                c.execute(f"SELECT COUNT(*) FROM books WHERE owner_id='{st.session_state.login_id}' AND book_name='{book_choice}' AND status!='在庫'")
-                total_existing = int(c.fetchone()[0])
-                
-                can_submit = True
-                if total_existing > 0:
-                    st.info(f"已重複借閱 **{total_existing}** 本此準則。")
-                    confirm_extra = st.checkbox("☑️ 我已知有此本準則，此為「缺少數量再額外申請」 (打勾後即可送出)", key="chk_extra_borrow")
-                    if not confirm_extra:
-                        can_submit = False
-                
-                if can_submit:
-                    if st.button("✅ 送出借閱申請"):
-                        c = conn.cursor()
-                        c.execute("INSERT INTO borrow_requests (login_id, unit, book_name, quantity, status) VALUES (%s,%s,%s,%s,%s)",
-                                  (st.session_state.login_id, st.session_state.unit, book_choice, int(qty), '待審核'))
-                        
-                        c.execute(f"SELECT id FROM books WHERE book_name='{book_choice}' AND status='在庫' LIMIT {qty}")
-                        book_ids = [str(b[0]) for b in c.fetchall()]
-                        if book_ids:
-                            c.execute(f"UPDATE books SET status='審核中(已圈存)', owner_id='{st.session_state.login_id}' WHERE id IN ({','.join(book_ids)})")
+            stock_df = pd.read_sql_query("SELECT book_name as 書名, COUNT(*) as 可用庫存 FROM books WHERE status='在庫' GROUP BY book_name", conn)
+            if not stock_df.empty:
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    st.dataframe(stock_df, hide_index=True)
+                with col2:
+                    book_choice = st.selectbox("選擇需要借閱的準則", stock_df['書名'].tolist())
+                    max_stock = int(stock_df[stock_df['書名'] == book_choice]['可用庫存'].iloc[0])
+                    qty = st.number_input("申請數量 (已鎖定最高可用庫存)", min_value=1, max_value=max_stock, value=1)
+                    
+                    c = conn.cursor()
+                    c.execute(f"SELECT COUNT(*) FROM books WHERE owner_id='{st.session_state.login_id}' AND book_name='{book_choice}' AND status!='在庫'")
+                    total_existing = int(c.fetchone()[0])
+                    
+                    can_submit = True
+                    if total_existing > 0:
+                        st.info(f"已重複借閱 **{total_existing}** 本此準則。")
+                        confirm_extra = st.checkbox("☑️ 我已知有此本準則，此為「缺少數量再額外申請」 (打勾後即可送出)", key="chk_extra_borrow")
+                        if not confirm_extra:
+                            can_submit = False
+                    
+                    if can_submit:
+                        if st.button("✅ 送出借閱申請"):
+                            c = conn.cursor()
+                            c.execute("INSERT INTO borrow_requests (login_id, unit, book_name, quantity, status) VALUES (%s,%s,%s,%s,%s)",
+                                      (st.session_state.login_id, st.session_state.unit, book_choice, int(qty), '待審核'))
                             
-                        now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "送出借閱", f"申請並圈存 {book_choice} 共 {qty} 本"))
-                        conn.commit()
-                        
-                        if 'chk_extra_borrow' in st.session_state: del st.session_state['chk_extra_borrow']
-                        st.session_state.borrow_success = f"✅ 已成功送出申請：{book_choice} 共 {qty} 本！，請等待文書兵核准發放。"
-                        st.rerun()
+                            c.execute(f"SELECT id FROM books WHERE book_name='{book_choice}' AND status='在庫' LIMIT {qty}")
+                            book_ids = [str(b[0]) for b in c.fetchall()]
+                            if book_ids:
+                                c.execute(f"UPDATE books SET status='審核中(已圈存)', owner_id='{st.session_state.login_id}' WHERE id IN ({','.join(book_ids)})")
+                                
+                            now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "送出借閱", f"申請並圈存 {book_choice} 共 {qty} 本"))
+                            conn.commit()
+                            
+                            if 'chk_extra_borrow' in st.session_state: del st.session_state['chk_extra_borrow']
+                            st.session_state.borrow_success = f"✅ 已成功送出申請：{book_choice} 共 {qty} 本！，請等待文書兵核准發放。"
+                            st.rerun()
 
+        # ======== 🟢 分頁 2：全新的 Line 報表生成 ========
+        with tabs_l5_borrow[1]:
+            st.subheader("💬 Line 借還書回報")
+            st.info("💡 請在送出申請後，點擊下方按鈕產生回報文字，並複製貼至 Line 群組。")
+            
+            cadre_name = st.text_input("回報對象稱呼", value="長官")
+            
+            if st.button("🚀 生成借還書清單", type="primary"):
+                my_id = st.session_state.login_id
+                my_unit = st.session_state.unit
+                
+                # 1. 抓取剛剛送出的「待審核」借閱
+                br_df = pd.read_sql_query(f"SELECT book_name, quantity FROM borrow_requests WHERE login_id='{my_id}' AND status='待審核'", conn)
+                
+                # 2. 抓取目前點選的「歸還中」書目
+                rt_df = pd.read_sql_query(f"SELECT book_name FROM books WHERE owner_id='{my_id}' AND status='歸還中'", conn)
+                
+                # 3. 組合軍規文字
+                msg_l5 = f"{cadre_name}好，借還書清單\n"
+                msg_l5 += f"==== 【{my_unit}】 ====\n"
+                
+                # 借閱區塊
+                msg_l5 += "借閱書目：\n"
+                if not br_df.empty:
+                    for _, r in br_df.iterrows():
+                        msg_l5 += f"{r['book_name']}*{r['quantity']}\n"
+                else:
+                    msg_l5 += "無\n"
+                    
+                # 歸還區塊
+                msg_l5 += "\n歸還書目：\n"
+                if not rt_df.empty:
+                    rt_group = rt_df.groupby('book_name').size()
+                    for b_name, count in rt_group.items():
+                        msg_l5 += f"{b_name}*{count}\n"
+                else:
+                    msg_l5 += "無\n"
+                    
+                st.success("✨ 回報文字生成完畢！請點擊下方框框全選複製：")
+                st.text_area("複製區", value=msg_l5.strip(), height=300)
+                
     elif menu == "準則歸還" and st.session_state.role == 'L5':
         st.header("📤 準則歸還")
         books_df = pd.read_sql_query(f"SELECT id, book_name as 書名, serial_number as 序號 FROM books WHERE owner_id='{st.session_state.login_id}' AND status='借閱中'", conn)
@@ -1253,7 +1299,7 @@ try:
                         SELECT br.unit, br.book_name, SUM(br.quantity) as qty 
                         FROM borrow_requests br 
                         JOIN users u ON br.login_id = u.login_id 
-                        WHERE u.squadron='{target_squadron}' AND br.status IN ('待審核', '已核准(實發%%)') 
+                        WHERE u.squadron='{target_squadron}' AND br.status LIKE '已核准(實發%%)' 
                         GROUP BY br.unit, br.book_name
                     """
                     borrow_df = pd.read_sql_query(borrow_query, conn)
@@ -1394,6 +1440,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
