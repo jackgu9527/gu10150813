@@ -859,7 +859,7 @@ try:
                                 "核准數量": st.column_config.NumberColumn("核准(可修改)", min_value=0),
                                 "單號": None, "帳號": None
                             },
-                            key=f"req_editor_v1_{select_all}" 
+                            key="req_batch_editor_v2" 
                         )
                         sel_reqs = edited_req[edited_req["勾選"] == True]
                         
@@ -892,6 +892,8 @@ try:
                                         c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "駁回借閱", f"全數駁回 {row['班隊']} 的 {req_book} 申請"))
                                 
                                 conn.commit()
+                                if "req_batch_editor_v2" in st.session_state:
+                                    del st.session_state["req_batch_editor_v2"]
                                 st.success(f"✅ 批次審核完成！共處理 {len(sel_reqs)} 本準則。")
                                 import time
                                 time.sleep(1.5)
