@@ -473,7 +473,7 @@ try:
                 else:
                     st.success("目前沒有等待幹部點收的準則。")
 
-            # L5：帳號安全
+            # ======== 🟢 L5：訓員 (帳號安全，嚴格限制修改次數) ========
             with col2:
                 st.markdown("#### ⚙️ 帳號安全與資料設定")
                 st.write(f"免審核修改額度：**{st.session_state.setup_count} 次**")
@@ -516,6 +516,7 @@ try:
                         else:
                             st.error("❌ 您的修改額度已用畢。")
 
+        # ======== 🟢 L4：區隊長/文書兵 (戰情看板 + 姓名/帳密修改) ========
         elif st.session_state.role == 'L4':
             col1, col2 = st.columns([2, 1])
             with col1:
@@ -586,6 +587,35 @@ try:
                                         time.sleep(1.5)
                                         st.session_state.clear() 
                                         st.rerun()
+
+        # ======== 🟢 L2 & L3：大隊部/中隊部 (純修改帳密，無次數限制) ========
+        elif st.session_state.role in ['L2', 'L3']:
+            st.markdown("#### ⚙️ 高階幹部專屬帳密設置")
+            with st.form("l23_setup_form"):
+                st.info("💡 高階幹部可無限次修改您的「專屬帳號」與「密碼」。")
+                new_id = st.text_input("新帳號", value=st.session_state.login_id)
+                new_pwd = st.text_input("新密碼 (必填)", type="password")
+                
+                if st.form_submit_button("確認修改"):
+                    if not new_pwd:
+                        st.error("請輸入新密碼！")
+                    else:
+                        c = conn.cursor()
+                        uid = int(st.session_state.id)
+                        final_id = new_id.strip() if new_id.strip() else st.session_state.login_id
+                        
+                        c.execute("SELECT COUNT(*) FROM users WHERE (login_id=%s OR pending_login_id=%s) AND id!=%s", (final_id, final_id, uid))
+                        if c.fetchone()[0] > 0:
+                            st.error("❌ 修改失敗！此帳號已被他人使用！")
+                        else:
+                            # 繞過免審額度，直接強制覆蓋寫入資料庫
+                            c.execute("UPDATE users SET login_id=%s, password=%s WHERE id=%s", (final_id, new_pwd, uid))
+                            conn.commit()
+                            st.success("✅ 帳號與密碼修改成功！系統將自動登出...")
+                            import time
+                            time.sleep(1.5)
+                            st.session_state.clear() 
+                            st.rerun()
         else:
             st.markdown(f"**{display_name}**，長官好今日概況良好。")
 
@@ -1364,6 +1394,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
