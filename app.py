@@ -835,6 +835,22 @@ try:
                     req_df = pd.read_sql_query(f"SELECT br.id as 單號, br.login_id as 帳號, br.unit as 班隊, br.book_name as 書名, br.quantity as 申請數量 FROM borrow_requests br JOIN users u ON br.login_id = u.login_id WHERE br.status='待審核' AND u.squadron IN ({sq_in_clause}) ORDER BY br.unit, br.book_name, br.id", conn)
                     
                     if not req_df.empty:
+                        # === 🚀 終極防護 1：建立記憶保險箱，在表格被洗掉前先存檔 ===
+                        if 'saved_req_qty' not in st.session_state:
+                            st.session_state['saved_req_qty'] = {}
+                            
+                        if "req_batch_editor_v2" in st.session_state:
+                            edits = st.session_state["req_batch_editor_v2"].get("edited_rows", {})
+                            for r_idx, edit_dict in edits.items():
+                                try:
+                                    idx_int = int(r_idx)
+                                    if "核准數量" in edit_dict and idx_int < len(req_df):
+                                        req_id = req_df.at[idx_int, '單號'] # 綁定唯一單號
+                                        st.session_state['saved_req_qty'][req_id] = edit_dict['核准數量']
+                                except Exception:
+                                    pass
+                        # ============================================================
+
                         owned_counts = []
                         c = conn.cursor()
                         for _, row in req_df.iterrows():
@@ -851,6 +867,13 @@ try:
                             
                         req_df.insert(0, "勾選", select_all)
                         req_df['核准數量'] = req_df['申請數量'] 
+                        
+                        # === 🚀 終極防護 2：表格重繪前，把保險箱裡的數字無縫倒回去 ===
+                        for i, row in req_df.iterrows():
+                            req_id = row['單號']
+                            if req_id in st.session_state['saved_req_qty']:
+                                req_df.at[i, '核准數量'] = st.session_state['saved_req_qty'][req_id]
+                        # ============================================================
                         
                         edited_req = st.data_editor(
                             req_df, hide_index=True, disabled=["單號", "帳號", "班隊", "書名", "申請數量", "已持有數"], width='stretch',  
@@ -892,8 +915,13 @@ try:
                                         c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "駁回借閱", f"全數駁回 {row['班隊']} 的 {req_book} 申請"))
                                 
                                 conn.commit()
+                                
+                                # 🚀 任務完成，將雙重記憶體徹底銷毀
                                 if "req_batch_editor_v2" in st.session_state:
                                     del st.session_state["req_batch_editor_v2"]
+                                if "saved_req_qty" in st.session_state:
+                                    del st.session_state["saved_req_qty"]
+                                    
                                 st.success(f"✅ 批次審核完成！共處理 {len(sel_reqs)} 本準則。")
                                 import time
                                 time.sleep(1.5)
@@ -1336,6 +1364,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
