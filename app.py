@@ -338,12 +338,14 @@ try:
                     st.warning("⚠️ 您有已核准但尚未綁定序號的準則！請對照實體書進行批次登錄。")
                     grouped = pending_claim.groupby('book_name')
                     with st.form("batch_claim_form"):
+                        st.info("💡 若部分準則【尚未發下來】，請直接將該欄位「留空」，系統會自動為您保留該筆額度以便後續登錄。")
                         claim_data = {}
                         for book_name, group in grouped:
                             qty = len(group)
-                            st.markdown(f"**📘 {book_name}** (核准數量：**{qty}** 本)")
+                            st.markdown(f"**📘 {book_name}** (待領額度：**{qty}** 本)")
                             serials_str = st.text_input("請輸入實體序號 (多本請用逗號 , 隔開)", key=f"serials_{book_name}", placeholder="例如: M2A2001, M2A2002")
-                            is_short = st.checkbox(f"☑️ 若實際領取少於 {qty} 本，請勾選此項，系統會將沒拿到的書額度退回 (標記為少領)", key=f"short_{book_name}")
+                            # 優化文字，清楚區分「還沒拿到」與「確定短少」
+                            is_short = st.checkbox(f"☑️ 異常回報：若確定「不會再領到」剩下的書才勾選此項 (系統會註銷剩餘額度退回庫房)", key=f"short_{book_name}")
                             st.markdown("---")
                             claim_data[book_name] = {
                                 "ids": group['id'].tolist(),
@@ -362,18 +364,21 @@ try:
                                 approved_qty = int(data["qty"])
                                 ids = data["ids"]
                                 
+                                # 1. 數量超過防呆
                                 if entered_qty > approved_qty:
-                                    st.error(f"❌ {b_name} 輸入的序號數量 ({entered_qty}本) 超過核准數量 ({approved_qty}本)！")
+                                    st.error(f"❌ {b_name} 輸入的序號數量 ({entered_qty}本) 超過待領額度 ({approved_qty}本)！")
                                     has_error = True
                                     break
                                 
-                                if entered_qty < approved_qty and not data["is_short"]:
-                                    st.error(f"❌ {b_name} 輸入的序號少於核准數量！如果您沒拿到足夠的書，請務必勾選下方的「少領」切結選項！")
-                                    has_error = True
-                                    break
-                                    
+                                # 2. 【全新擴充】完全沒填且沒勾少領 -> 代表這科還沒發，直接跳過保留原狀
+                                if entered_qty == 0 and not data["is_short"]:
+                                    continue
+                                
+                                # 3. 處理資料庫更新
                                 for i in range(approved_qty):
                                     placeholder_id = int(ids[i])
+                                    
+                                    # 針對有填寫實體序號的部分，進行過戶與綁定
                                     if i < entered_qty:
                                         new_serial = raw_serials[i]
                                         c.execute("SELECT id, status FROM books WHERE serial_number=%s", (new_serial,))
@@ -389,12 +394,19 @@ try:
                                                 break
                                         else:
                                             c.execute("UPDATE books SET serial_number=%s, status='借閱中' WHERE id=%s", (new_serial, placeholder_id))
+                                    
+                                    # 針對沒填寫到序號的額度（即 i >= entered_qty）
                                     else:
-                                        c.execute(f"UPDATE books SET status='少領異常' WHERE id={placeholder_id}")
-                                        
+                                        if data["is_short"]:
+                                            # 有勾選異常回報 -> 標記為少領異常，等待幹部退庫結案
+                                            c.execute(f"UPDATE books SET status='少領異常' WHERE id={placeholder_id}")
+                                        else:
+                                            # 沒勾選 -> 代表晚點才會拿到，不更新狀態，讓它繼續維持 '保留待領取'
+                                            pass
+                                            
                             if not has_error:
                                 conn.commit()
-                                log_action(st.session_state.login_id, "領取綁定", "完成待領取準則之序號批次洗牌與回報")
+                                log_action(st.session_state.login_id, "領取綁定", "完成待領取準則之序號分批/完整綁定")
                                 st.success("✅ 序號綁定完成！庫房已自動配對更新。")
                                 import time
                                 time.sleep(1.5)
@@ -1479,6 +1491,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
