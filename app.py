@@ -622,8 +622,8 @@ try:
     elif menu == "準則借閱" and st.session_state.role == 'L5':
         st.header("📥 準則借閱與回報")
         
-        # 🚀 升級：將原本的單一畫面，切分成「借閱申請」與「Line 回報」兩個獨立分頁
-        tabs_l5_borrow = st.tabs(["📚 借閱申請", "💬 Line 借還回報"])
+        # 🚀 升級：將原本的單一畫面，切分成「借閱申請」與「Line 借還書回報」兩個獨立分頁
+        tabs_l5_borrow = st.tabs(["📚 借閱申請", "💬 Line 借還書回報"])
         
         # ======== 🟢 分頁 1：原本的借閱申請邏輯 ========
         with tabs_l5_borrow[0]:
@@ -885,7 +885,7 @@ try:
 
         elif st.session_state.role == 'L4':
             is_doc = "人事" in st.session_state.title or "文書" in st.session_state.title
-            tabs = st.tabs(["註冊開通", "準則借閱核准", "準則歸還", "結訓日與帳密修改", "💬 Line報表產生"]) if is_doc else st.tabs(["註冊開通", "準則歸還", "結訓日與帳密修改", "💬 Line報表產生"])
+            tabs = st.tabs(["註冊開通", "準則借閱核准", "準則歸還", "結訓日與帳密修改", "💬 line借還書回報"]) if is_doc else st.tabs(["註冊開通", "準則歸還", "結訓日與帳密修改", "💬 Line借還書回報"])
             sq_list = [s.strip() for s in st.session_state.squadron.split(',')]
             sq_in_clause = "'" + "','".join(sq_list) + "'"
                 
