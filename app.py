@@ -297,7 +297,7 @@ with st.sidebar:
     st.markdown("---")
     
     if st.session_state.role == 'L5':
-        menu = st.radio("功能導覽", ["首頁", "準則借閱", "準則歸還"])
+        menu = st.radio("功能導覽", ["首頁", "準則借閱", "準則歸還", "綜合查詢"])
     else:
         menu = st.radio("管理作業", ["首頁", "審核與管理", "綜合查詢", "操作紀錄"])
     
