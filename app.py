@@ -1296,11 +1296,11 @@ try:
                     c = conn.cursor()
                     # 1. 抓取該中隊下「所有班隊」的借閱清單
                     borrow_query = f"""
-                        SELECT br.unit, br.book_name, SUM(br.quantity) as qty 
-                        FROM borrow_requests br 
-                        JOIN users u ON br.login_id = u.login_id 
-                        WHERE u.squadron='{target_squadron}' AND br.status LIKE '已核准(實發%%)' 
-                        GROUP BY br.unit, br.book_name
+                        SELECT u.unit, b.book_name, COUNT(b.id) as qty
+                         FROM books b
+                        JOIN users u ON b.owner_id = u.login_id 
+                        WHERE u.squadron='{target_squadron}' AND br.status='保留待領取' 
+                        GROUP BY u.unit, b.book_name
                     """
                     borrow_df = pd.read_sql_query(borrow_query, conn)
                     
