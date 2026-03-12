@@ -764,67 +764,101 @@ try:
         books_df = pd.read_sql_query(f"SELECT id, book_name as 書名, serial_number as 序號 FROM books WHERE owner_id='{st.session_state.login_id}' AND status='借閱中'", conn)
         
         if not books_df.empty:
-            st.info("💡 【快捷歸還】：直接勾選準則前面的「☑️ 全還」即可歸還該類所有準則。\n💡 【部分歸還】：點擊右側展開，勾選您要歸還的準則序號。")
-            edited_return_dfs = {}
-            category_checks = {} 
+            st.info("💡 【快捷歸還】：勾選各準則標題旁的「☑️ 全數歸還此項」即可將該類準則全數歸還。\n💡 【部分歸還】：展開個別序號清單，單獨勾選要歸還的序號。")
             
+            # === 🚀 終極防護：建立「跨區塊記憶保險箱」 ===
+            if 'l5_partial_return_memory' not in st.session_state:
+                st.session_state['l5_partial_return_memory'] = {}
+                
+            # 🛡️ 步驟 1：在畫面重繪前，攔截所有被勾選的單獨序號，存入保險箱
+            for b_name in books_df['書名'].unique():
+                editor_key = f"return_editor_{b_name}"
+                if editor_key in st.session_state:
+                    edits = st.session_state[editor_key].get("edited_rows", {})
+                    temp_df = books_df[books_df['書名'] == b_name].reset_index(drop=True)
+                    for r_idx_str, edit_dict in edits.items():
+                        if "勾選歸還" in edit_dict:
+                            r_idx = int(r_idx_str)
+                            if r_idx < len(temp_df):
+                                book_id = temp_df.at[r_idx, 'id']
+                                # 寫入記憶
+                                st.session_state['l5_partial_return_memory'][book_id] = edit_dict["勾選歸還"]
+
+            category_checks = {} 
+            edited_return_dfs = {}
+            
+            # 繪製畫面
             for b_name in books_df['書名'].unique():
                 b_df = books_df[books_df['書名'] == b_name].reset_index(drop=True)
                 qty = len(b_df)
-                col_chk, col_exp = st.columns([1.5, 8.5])
+                
+                st.markdown(f"### 📘 {b_name}")
+                col_chk, col_exp = st.columns([2.5, 7.5])
+                
                 with col_chk:
-                    st.write("") 
-                    category_checks[b_name] = st.checkbox(f"☑️ 全還", key=f"all_ret_{b_name}")
+                    # 每項準則獨立的「全還」按鈕
+                    category_checks[b_name] = st.checkbox(f"☑️ 全數歸還此項 ({qty}本)", key=f"all_ret_{b_name}")
+                    
                 with col_exp:
-                    with st.expander(f"📘 {b_name} (目前持有 {qty} 本)"):
+                    with st.expander(f"🔽 展開個別序號 (點擊查看)"):
                         if category_checks[b_name]:
-                            st.success(f"✨ 已勾選全數歸還！送出後將一併歸還這 {qty} 本準則。")
+                            # 如果外面勾了全選，裡面就直接顯示提示，鎖定個別操作
+                            st.success(f"✨ 已選擇全數歸還！送出後將一併歸還這 {qty} 本準則。")
                             edited_return_dfs[b_name] = None 
                         else:
-                            b_df.insert(0, "勾選歸還", False)
-                            edited_return_dfs[b_name] = st.data_editor(b_df, hide_index=True, disabled=["id", "書名", "序號"], width='stretch', key=f"return_chk_{b_name}")
-            
-            st.markdown("---")
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                if st.button("🚨 一鍵歸還所有準則", type="primary"):
-                    all_ids = books_df["id"].tolist()
+                            # 🛡️ 步驟 2：從保險箱讀取記憶，精準還原每一本書剛剛的勾選狀態
+                            initial_checks = []
+                            for _, row in b_df.iterrows():
+                                b_id = row['id']
+                                initial_checks.append(st.session_state['l5_partial_return_memory'].get(b_id, False))
+                                
+                            b_df.insert(0, "勾選歸還", initial_checks)
+                            editor_key = f"return_editor_{b_name}"
+                            edited_return_dfs[b_name] = st.data_editor(
+                                b_df, 
+                                hide_index=True, 
+                                disabled=["id", "書名", "序號"], 
+                                width='stretch', 
+                                key=editor_key
+                            )
+                st.markdown("---") # 加上分隔線，視覺更俐落
+                
+            # 唯一安全出口：送出按鈕
+            if st.button("📤 送出目前的勾選項目", type="primary", use_container_width=True):
+                selected_ids = []
+                for b_name in books_df['書名'].unique():
+                    if category_checks[b_name]:
+                        # 該科目全選
+                        full_b_df = books_df[books_df['書名'] == b_name]
+                        selected_ids.extend(full_b_df["id"].tolist())
+                    elif edited_return_dfs[b_name] is not None:
+                        # 該科目部分勾選
+                        edited_df = edited_return_dfs[b_name]
+                        checked_rows = edited_df[edited_df["勾選歸還"] == True]
+                        selected_ids.extend(checked_rows["id"].tolist())
+                
+                if selected_ids:
+                    # 終極防呆：確保沒有重複的 ID
+                    selected_ids = list(set(selected_ids)) 
+                    
                     c = conn.cursor()
-                    c.execute(f"UPDATE books SET status='歸還中' WHERE id IN ({','.join(map(str, all_ids))})")
+                    c.execute(f"UPDATE books SET status='歸還中' WHERE id IN ({','.join(map(str, selected_ids))})")
                     now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "一鍵歸還", f"全數歸還共 {len(all_ids)} 本"))
+                    c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "部分歸還", f"歸還共 {len(selected_ids)} 本準則"))
                     conn.commit()
-                    st.success("✅ 已送出全數歸還申請！等待幹部點收。")
+                    
+                    # 任務成功，銷毀保險箱
+                    if 'l5_partial_return_memory' in st.session_state: 
+                        del st.session_state['l5_partial_return_memory']
+                        
+                    st.success(f"✅ 已送出 {len(selected_ids)} 本歸還申請！等待幹部點收。")
                     import time
                     time.sleep(1.5)
                     st.rerun()
-                    
-            with col2:
-                if st.button("📤 送出勾選項目"):
-                    selected_ids = []
-                    for b_name in books_df['書名'].unique():
-                        if category_checks[b_name]:
-                            full_b_df = books_df[books_df['書名'] == b_name]
-                            selected_ids.extend(full_b_df["id"].tolist())
-                        elif edited_return_dfs[b_name] is not None:
-                            edited_df = edited_return_dfs[b_name]
-                            checked_rows = edited_df[edited_df["勾選歸還"] == True]
-                            selected_ids.extend(checked_rows["id"].tolist())
-                    
-                    if selected_ids:
-                        c = conn.cursor()
-                        c.execute(f"UPDATE books SET status='歸還中' WHERE id IN ({','.join(map(str, selected_ids))})")
-                        now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "部分歸還", f"歸還共 {len(selected_ids)} 本"))
-                        conn.commit()
-                        st.success(f"✅ 已送出 {len(selected_ids)} 本歸還申請！等待幹部點收。")
-                        import time
-                        time.sleep(1.5)
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ 您尚未勾選任何需要歸還的準則！")
+                else:
+                    st.warning("⚠️ 您尚未勾選任何需要歸還的準則！")
         else:
-            st.success("您名下目前沒有需要歸還的準則！")
+            st.success("✨ 您名下目前沒有需要歸還的準則！")
 
     elif menu == "審核與管理" and st.session_state.role in ['L1', 'L2', 'L3', 'L4']:
         st.header("⚙️ 審核與管理後台")
@@ -1491,6 +1525,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
