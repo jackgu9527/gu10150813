@@ -1357,11 +1357,14 @@ try:
                     st.success("✨ 中隊彙總報表生成完畢！請點擊框框內全選複製：")
                     st.text_area("複製區", value=msg.strip(), height=400)
 
-    elif menu == "綜合查詢" and st.session_state.role in ['L1', 'L2', 'L3', 'L4']:
+    elif menu == "綜合查詢":
         st.header("🔍綜合查詢")
-        search_type = st.radio("查詢模式", ["查書名", "查序號", "中隊持有現況"], horizontal=True)
-        st.markdown("---")
-        
+        # 依照階級給予不同的查詢權限
+        if st.session_state.role == 'L5':
+            search_type = st.radio("查詢模式", ["查書名", "查序號"], horizontal=True)
+        else:
+            search_type = st.radio("查詢模式", ["查書名", "查序號", "中隊持有現況"], horizontal=True)
+
         if search_type == "查書名" or search_type == "查序號":
             keyword = st.text_input("請輸入關鍵字")
             if st.button("搜尋") and keyword:
