@@ -53,8 +53,12 @@ def log_action(user_id, action, details):
     conn = get_db_connection()
     try:
         c = conn.cursor()
+        # 🚀 強制綁定台灣時區 (UTC+8)
+        tz_tw = timezone(timedelta(hours=8))
+        tw_now = datetime.now(tz_tw).strftime("%Y-%m-%d %H:%M:%S")
+        
         c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)",
-                  (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(user_id), str(action), str(details)))
+                  (tw_now, str(user_id), str(action), str(details)))
         conn.commit()
     finally:
         release_connection(conn)
@@ -456,7 +460,7 @@ try:
                                             c.execute(f"UPDATE books SET status='借閱中', owner_id='{st.session_state.login_id}' WHERE id={int(exist_id)}")
                                             c.execute(f"UPDATE books SET status='在庫', owner_id='在庫' WHERE id={book_id}")
                                             
-                                            now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                            now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                                             c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "序號綁定", f"將佔位符 {old_serial} 退回庫房，綁定真實庫存 {new_serial}"))
                                         else:
                                             st.error(f"❌ 衝突！序號 【{new_serial}】 正被【{exist_owner}】借閱中！請確認實體書狀況。")
@@ -464,7 +468,7 @@ try:
                                             break
                                     else:
                                         c.execute("UPDATE books SET serial_number=%s WHERE id=%s", (new_serial, book_id))
-                                        now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                                         c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "修正序號", f"將 {b_name} 的序號 {old_serial} 修正為 {new_serial}"))
                                         
                             if has_err: break
@@ -513,7 +517,7 @@ try:
                                     
                                     conn.commit() 
                                     
-                                    now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                                     c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, new_id, "資料修改", "修改了帳密並同步過戶名下所有準則"))
                                     conn.commit()
                                     
@@ -674,7 +678,7 @@ try:
                             if book_ids:
                                 c.execute(f"UPDATE books SET status='審核中(已圈存)', owner_id='{st.session_state.login_id}' WHERE id IN ({','.join(book_ids)})")
                                 
-                            now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                             c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "送出借閱", f"申請並圈存 {book_choice} 共 {qty} 本"))
                             conn.commit()
                             
@@ -843,7 +847,7 @@ try:
                     
                     c = conn.cursor()
                     c.execute(f"UPDATE books SET status='歸還中' WHERE id IN ({','.join(map(str, selected_ids))})")
-                    now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                     c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "部分歸還", f"歸還共 {len(selected_ids)} 本準則"))
                     conn.commit()
                     
@@ -1134,7 +1138,7 @@ try:
                                     if approved_ids: c.execute(f"UPDATE books SET status='保留待領取' WHERE id IN ({','.join(map(str, approved_ids))})")
                                     if rejected_ids: c.execute(f"UPDATE books SET status='在庫', owner_id='在庫' WHERE id IN ({','.join(map(str, rejected_ids))})")
                                         
-                                    now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                                     if approve_qty > 0:
                                         c.execute(f"UPDATE borrow_requests SET status='已核准(實發{approve_qty}本)' WHERE id={req_id}")
                                         c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "核准借閱", f"核准 {req_book} {approve_qty} 本給 {row['班隊']}"))
@@ -1203,7 +1207,7 @@ try:
                             if resolved_ids:
                                 c = conn.cursor()
                                 c.execute(f"UPDATE books SET status='在庫', owner_id='在庫' WHERE id IN ({','.join(map(str, resolved_ids))})")
-                                now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                                 c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "異常處理", f"將少領的 {len(resolved_ids)} 本額度釋放回庫房"))
                                 conn.commit()
                                 st.success(f"✅ 成功結案！已釋放 {len(resolved_ids)} 本準則回大庫房。")
@@ -1289,7 +1293,7 @@ try:
                         else:
                             has_action = False
                             c = conn.cursor()
-                            now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                             if received_ids:
                                 c.execute(f"UPDATE books SET status='在庫', owner_id='在庫' WHERE id IN ({','.join(map(str, received_ids))})")
                                 c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "歸還點收", f"確認收訖並退回庫房共 {len(received_ids)} 本圖書"))
@@ -1325,7 +1329,7 @@ try:
                         
                         if recovered_ids:
                             c = conn.cursor()
-                            now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
                             
                             c.execute(f"UPDATE books SET status='在庫', owner_id='在庫' WHERE id IN ({','.join(map(str, recovered_ids))})")
                             c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "準則尋獲", f"從扣押帳號中尋獲並退庫共 {len(recovered_ids)} 本準則"))
@@ -1595,6 +1599,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
