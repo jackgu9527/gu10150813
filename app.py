@@ -916,7 +916,6 @@ try:
             
             if st.button("🔄 從最新 CSV 同步新增準則", type="primary", use_container_width=True):
                 if CSV_FILE and os.path.exists(CSV_FILE):
-                    conn = get_db_connection()
                     try:
                         # 讀取 CSV
                         try:
@@ -972,8 +971,6 @@ try:
                     except Exception as e:
                         conn.rollback()
                         st.error(f"❌ 同步失敗，請檢查 CSV 格式。詳細原因：{e}")
-                    finally:
-                        release_connection(conn)
                 else:
                     st.error("❌ 系統找不到 CSV 檔案！請確認 GitHub 上的檔案名稱是否包含「準則資料庫」且副檔名為 .csv。")
                             
