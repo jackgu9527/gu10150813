@@ -1299,7 +1299,7 @@ try:
                         SELECT u.unit, b.book_name, COUNT(b.id) as qty
                          FROM books b
                         JOIN users u ON b.owner_id = u.login_id 
-                        WHERE u.squadron='{target_squadron}' AND br.status='保留待領取' 
+                        WHERE u.squadron='{target_squadron}' AND b.status='保留待領取' 
                         GROUP BY u.unit, b.book_name
                     """
                     borrow_df = pd.read_sql_query(borrow_query, conn)
