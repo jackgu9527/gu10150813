@@ -903,6 +903,76 @@ try:
                     conn.rollback()
                     st.error(f"❌ 儲存失敗！可能有帳號重複或格式錯誤。詳細原因：{e}")
 
+            # ==========================================
+            # ✨ 新增：CSV 無損同步擴充引擎 (就接在儲存失敗的 except 下方)
+            # ==========================================
+            st.markdown("---")
+            st.subheader("📥 準則資料庫擴充與同步")
+            st.info("💡 當您更新了 GitHub 上的 `準則資料庫.csv` 後，點擊此按鈕即可將【新增加的書目或數量】匯入系統，不會影響現有的借閱紀錄。")
+            
+            if st.button("🔄 從最新 CSV 同步新增準則", type="primary", use_container_width=True):
+                if CSV_FILE and os.path.exists(CSV_FILE):
+                    conn = get_db_connection()
+                    try:
+                        # 讀取 CSV
+                        try:
+                            df_books = pd.read_csv(CSV_FILE, encoding='big5')
+                        except UnicodeDecodeError:
+                            df_books = pd.read_csv(CSV_FILE, encoding='utf-8')
+                            
+                        c = conn.cursor()
+                        insert_count = 0
+                        skip_count = 0
+                        
+                        for index, row in df_books.iterrows():
+                            if '書刊名稱' in row and pd.notna(row['書刊名稱']):
+                                raw_title = str(row['書刊名稱']).strip()
+                                
+                                pub_date = ""
+                                if '出版日期' in row and pd.notna(row['出版日期']):
+                                    raw_date = str(row['出版日期']).strip()
+                                    if raw_date.endswith('.0'): raw_date = raw_date[:-2]
+                                    pub_date = raw_date
+                                    
+                                book_title = f"{raw_title} [{pub_date}]" if pub_date else raw_title
+                                
+                                qty = 1
+                                if '數量' in row and pd.notna(row['數量']):
+                                    qty = int(row['數量'])
+                                elif '化訓準則館' in row and pd.notna(row['化訓準則館']):
+                                    qty = int(row['化訓準則館'])
+                                    
+                                for i in range(1, qty + 1):
+                                    serial = f"{book_title}-{i:03d}"
+                                    
+                                    # 🚀 神級防呆：ON CONFLICT DO NOTHING
+                                    # 因為我們現在使用 psycopg2 原生 SQL 寫法，要先確定資料表有 UNIQUE 約束
+                                    # 我們改用更安全的先 SELECT 後 INSERT 寫法，確保相容性
+                                    c.execute("SELECT id FROM books WHERE serial_number=%s", (serial,))
+                                    if not c.fetchone():
+                                        c.execute("""
+                                            INSERT INTO books (book_name, serial_number, owner_id, status) 
+                                            VALUES (%s, %s, %s, %s)
+                                        """, (book_title, serial, '在庫', '在庫'))
+                                        insert_count += 1
+                                    else:
+                                        skip_count += 1
+                                        
+                        conn.commit()
+                        st.success(f"✅ 同步完成！成功從 CSV 新增了 **{insert_count}** 本全新準則，並安全略過了 {skip_count} 本已存在的準則。")
+                        
+                        tz_tw = timezone(timedelta(hours=8))
+                        now_time = datetime.now(tz_tw).strftime("%Y-%m-%d %H:%M:%S")
+                        log_action("SYSTEM_L1", "CSV 擴充同步", f"管理員執行同步，新增了 {insert_count} 本準則")
+                        
+                    except Exception as e:
+                        conn.rollback()
+                        st.error(f"❌ 同步失敗，請檢查 CSV 格式。詳細原因：{e}")
+                    finally:
+                        release_connection(conn)
+                else:
+                    st.error("❌ 系統找不到 CSV 檔案！請確認 GitHub 上的檔案名稱是否包含「準則資料庫」且副檔名為 .csv。")
+                            
         elif st.session_state.role == 'L3':
             st.subheader("中隊後台")
             pending_l4 = pd.read_sql_query(f"SELECT id, title as 職務, name as 原姓名, pending_name as 申請新姓名 FROM users WHERE role='L4' AND squadron='{st.session_state.squadron}' AND pending_name IS NOT NULL", conn)
@@ -1525,6 +1595,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
