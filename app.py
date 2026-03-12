@@ -622,8 +622,8 @@ try:
     elif menu == "準則借閱" and st.session_state.role == 'L5':
         st.header("📥 準則借閱與回報")
         
-        # 🚀 升級：將原本的單一畫面，切分成「借閱申請」與「Line 借還書回報」兩個獨立分頁
-        tabs_l5_borrow = st.tabs(["📚 借閱申請", "💬 Line 借還書回報"])
+        # 🚀 升級三標籤：加入每日清點回報
+        tabs_l5_borrow = st.tabs(["📚 借閱申請", "💬 Line 借還書回報", "📱 Line 準則清點回報"])
         
         # ======== 🟢 分頁 1：原本的借閱申請邏輯 ========
         with tabs_l5_borrow[0]:
@@ -670,12 +670,13 @@ try:
                             st.session_state.borrow_success = f"✅ 已成功送出申請：{book_choice} 共 {qty} 本！，請等待文書兵核准發放。"
                             st.rerun()
 
-        # ======== 🟢 分頁 2：全新的 Line 報表生成 ========
+        # ======== 🟢 分頁 2：Line 借還書報表生成 ========
         with tabs_l5_borrow[1]:
             st.subheader("💬 Line 借還書回報")
             st.info("💡 請在送出申請後，點擊下方按鈕產生回報文字，並複製貼至 Line 群組。")
             
-            cadre_name = st.text_input("回報對象稱呼", value="長官")
+            # 🚀 升級：下拉式選單
+            report_cadre = st.selectbox("回報對象", ["文書兵", "分隊長", "區隊長"], key="borrow_cadre")
             
             if st.button("🚀 生成借還書清單", type="primary"):
                 my_id = st.session_state.login_id
@@ -687,12 +688,13 @@ try:
                 # 2. 抓取目前點選的「歸還中」書目
                 rt_df = pd.read_sql_query(f"SELECT book_name FROM books WHERE owner_id='{my_id}' AND status='歸還中'", conn)
                 
-                # 3. 組合軍規文字
-                msg_l5 = f"{cadre_name}好，借還書清單\n"
-                msg_l5 += f"==== 【{my_unit}】 ====\n"
+                # 🚀 升級：對齊軍規報告格式
+                msg_l5 = f"報告{report_cadre}\n"
+                msg_l5 += f"班隊名稱：{my_unit}\n"
+                msg_l5 += "借還書清單：\n\n"
                 
                 # 借閱區塊
-                msg_l5 += "借閱書目：\n"
+                msg_l5 += "【申請借閱】：\n"
                 if not br_df.empty:
                     for _, r in br_df.iterrows():
                         msg_l5 += f"{r['book_name']}*{r['quantity']}\n"
@@ -700,7 +702,7 @@ try:
                     msg_l5 += "無\n"
                     
                 # 歸還區塊
-                msg_l5 += "\n歸還書目：\n"
+                msg_l5 += "\n【申請歸還】：\n"
                 if not rt_df.empty:
                     rt_group = rt_df.groupby('book_name').size()
                     for b_name, count in rt_group.items():
@@ -709,7 +711,41 @@ try:
                     msg_l5 += "無\n"
                     
                 st.success("✨ 回報文字生成完畢！請點擊下方框框全選複製：")
-                st.text_area("複製區", value=msg_l5.strip(), height=300)
+                st.text_area("借還書複製區", value=msg_l5.strip(), height=300, key="borrow_area")
+
+        # ======== 🟢 分頁 3：Line 準則清點回報 ========
+        with tabs_l5_borrow[2]:
+            st.subheader("📱 Line 準則清點回報")
+            st.info("💡 產生目前名下所有「借閱中」準則的序號清單，方便每日清點回報。")
+            
+            # 🚀 升級：下拉式選單
+            inv_cadre = st.selectbox("回報對象", ["文書兵", "分隊長", "區隊長"], key="inv_cadre")
+            
+            if st.button("🚀 生成清點報表", type="primary", key="btn_inv_report"):
+                my_id = st.session_state.login_id
+                my_unit = st.session_state.unit
+                
+                inv_df = pd.read_sql_query(f"SELECT book_name, serial_number FROM books WHERE owner_id='{my_id}' AND status='借閱中'", conn)
+                
+                # 🚀 升級：對齊軍規報告格式
+                inv_msg = f"報告{inv_cadre}\n"
+                inv_msg += f"班隊名稱：{my_unit}\n"
+                inv_msg += "準則清點：\n\n"
+                
+                if inv_df.empty:
+                    inv_msg += "目前名下無借閱中準則。\n"
+                else:
+                    grouped = inv_df.groupby('book_name')
+                    for b_name, group in grouped:
+                        qty = len(group)
+                        serials = group['serial_number'].tolist()
+                        serials_str = ",".join([str(s).strip() for s in serials])
+                        
+                        inv_msg += f"{b_name}*{qty}\n"
+                        inv_msg += f"{serials_str}\n\n"
+                        
+                st.success("✨ 清點回報文字生成完畢！請全選複製貼至 Line：")
+                st.text_area("清點複製區", value=inv_msg.strip(), height=300, key="inv_text_area")
                 
     elif menu == "準則歸還" and st.session_state.role == 'L5':
         st.header("📤 準則歸還")
@@ -1443,6 +1479,7 @@ try:
 
 finally:
     release_connection(conn)
+
 
 
 
