@@ -842,14 +842,30 @@ try:
                         selected_ids.extend(checked_rows["id"].tolist())
                 
                 if selected_ids:
-                    # 終極防呆：確保沒有重複的 ID
                     selected_ids = list(set(selected_ids)) 
+                    id_list_str = ','.join(map(str, selected_ids))
                     
                     c = conn.cursor()
-                    c.execute(f"UPDATE books SET status='歸還中' WHERE id IN ({','.join(map(str, selected_ids))})")
+                    # 撈出勾選的項目有哪幾種書，各幾本
+                    c.execute(f"SELECT book_name, COUNT(id) FROM books WHERE id IN ({id_list_str}) GROUP BY book_name")
+                    return_details = c.fetchall()
+                    
+                    c.execute(f"UPDATE books SET status='歸還中' WHERE id IN ({id_list_str})")
                     now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
-                    c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "部分歸還", f"歸還共 {len(selected_ids)} 本準則"))
+                    
+                    # 迴圈寫入標準格式
+                    for b_name, qty in return_details:
+                        c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", 
+                                  (now_time, st.session_state.login_id, "申請歸還", f"申請 {st.session_state.unit} 歸還 {b_name} {qty} 本"))
                     conn.commit()
+                    
+                    if 'l5_partial_return_memory' in st.session_state: 
+                        del st.session_state['l5_partial_return_memory']
+                        
+                    st.success(f"✅ 已送出 {len(selected_ids)} 本歸還申請！等待幹部點收。")
+                    import time
+                    time.sleep(1.5)
+                    st.rerun()
                     
                     # 任務成功，銷毀保險箱
                     if 'l5_partial_return_memory' in st.session_state: 
@@ -1291,22 +1307,37 @@ try:
                             has_action = False
                             c = conn.cursor()
                             now_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+                            
                             if received_ids:
-                                c.execute(f"UPDATE books SET status='在庫', owner_id='在庫' WHERE id IN ({','.join(map(str, received_ids))})")
-                                c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "歸還點收", f"確認收訖並退回庫房共 {len(received_ids)} 本圖書"))
+                                id_list_str = ','.join(map(str, received_ids))
+                                c.execute(f"SELECT u.unit, b.book_name, COUNT(b.id) FROM books b JOIN users u ON b.owner_id = u.login_id WHERE b.id IN ({id_list_str}) GROUP BY u.unit, b.book_name")
+                                recv_details = c.fetchall()
+                                
+                                c.execute(f"UPDATE books SET status='在庫', owner_id='在庫' WHERE id IN ({id_list_str})")
+                                
+                                for unit_name, b_name, qty in recv_details:
+                                    c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", 
+                                              (now_time, st.session_state.login_id, "歸還點收", f"核准 {unit_name} 歸還 {b_name} {qty} 本"))
                                 has_action = True
+                                
                             if rejected_ids:
-                                c.execute(f"UPDATE books SET status='借閱中' WHERE id IN ({','.join(map(str, rejected_ids))})")
-                                c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", (now_time, st.session_state.login_id, "駁回歸還", f"駁回裝備異常，退回訓員帳上共 {len(rejected_ids)} 本圖書"))
+                                id_list_str = ','.join(map(str, rejected_ids))
+                                c.execute(f"SELECT u.unit, b.book_name, COUNT(b.id) FROM books b JOIN users u ON b.owner_id = u.login_id WHERE b.id IN ({id_list_str}) GROUP BY u.unit, b.book_name")
+                                rej_details = c.fetchall()
+                                
+                                c.execute(f"UPDATE books SET status='借閱中' WHERE id IN ({id_list_str})")
+                                
+                                for unit_name, b_name, qty in rej_details:
+                                    c.execute("INSERT INTO action_logs (timestamp, user_id, action, details) VALUES (%s, %s, %s, %s)", 
+                                              (now_time, st.session_state.login_id, "駁回歸還", f"駁回 {unit_name} 歸還 {b_name} {qty} 本"))
                                 has_action = True
+                                
                             if has_action:
                                 conn.commit()
                                 st.success(f"✅ 點收作業完成！收訖 {len(received_ids)} 本，駁回退回 {len(rejected_ids)} 本。")
                                 import time
                                 time.sleep(1.5)
                                 st.rerun()
-                            else:
-                                st.warning("⚠️ 您尚未選擇任何點收或駁回動作！")
                 else:
                     st.success("目前各班隊皆無待點收的歸還準則！")
 
@@ -1576,6 +1607,8 @@ try:
     elif menu == "操作紀錄" and st.session_state.role in ['L1', 'L2', 'L3', 'L4']:
         st.header("🗂️ 操作紀錄")
         
+        search_keyword = st.text_input("🔍 搜尋紀錄 (可輸入班隊名稱、動作、準則名稱等)")
+        
         log_query = """
             SELECT a.timestamp as 時間, 
                    COALESCE(
@@ -1585,17 +1618,40 @@ try:
                            ELSE a.user_id 
                        END, a.user_id
                    ) as 操作者, 
-                   a.action as 動作, 
+                   a.action as 系統動作, 
                    a.details as 詳細內容 
             FROM action_logs a
             LEFT JOIN users u ON a.user_id = u.login_id
-            ORDER BY a.id DESC LIMIT 200
         """
+        
+        if search_keyword:
+            safe_kw = search_keyword.replace("'", "''")
+            log_query += f" WHERE a.details LIKE '%%{safe_kw}%%' OR a.action LIKE '%%{safe_kw}%%' OR u.unit LIKE '%%{safe_kw}%%' OR u.name LIKE '%%{safe_kw}%%'"
+            
+        log_query += " ORDER BY a.id DESC LIMIT 200"
         logs_df = pd.read_sql_query(log_query, conn)
-        st.dataframe(logs_df, use_container_width=True, hide_index=True)
+        
+        if logs_df.empty:
+            st.warning("沒有找到符合條件的操作紀錄。")
+        else:
+            import re
+            def parse_details(row):
+                text = str(row['詳細內容'])
+                # 正規表達式：精準捕捉標準格式
+                match = re.search(r'^(核准|申請|駁回)\s+(.*?)\s+(歸還|借閱)\s+(.*?)\s+(\d+)\s*本$', text)
+                
+                if match:
+                    return pd.Series([match.group(1), match.group(2), match.group(3), match.group(4), f"{match.group(5)} 本", ""])
+                else:
+                    return pd.Series(["-", "-", "-", "-", "-", text])
 
+            logs_df[['操作指令', '對象/班隊', '動作細節', '準則名稱(含版本)', '數量', '其他操作細節']] = logs_df.apply(parse_details, axis=1)
+            display_df = logs_df[['時間', '操作者', '操作指令', '對象/班隊', '動作細節', '準則名稱(含版本)', '數量', '其他操作細節']]
+            
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
 finally:
     release_connection(conn)
+
 
 
 
